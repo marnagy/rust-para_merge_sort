@@ -1,8 +1,10 @@
-//use rand::prelude::*;
 use rand;
 
 use std::thread;
 use std::sync::{Arc, Mutex};
+use std::rc::Rc;
+
+use std::marker::PhantomData;
 
 fn main() {
     //let mut input_line = String::new();
@@ -34,8 +36,12 @@ fn main() {
 
 fn merge_sort(arr: &mut Vec<i64>) {
     let arr_len = arr.len();
-    simple_merge_sort(arr, 0 as usize, arr_len - 1 as usize);
-    //par_merge_sort(arr, 0 as usize, arr_len - 1 as usize, 4);
+    let arr_slice = arr.as_mut_slice();
+
+    // simple_merge_sort(arr, 0 as usize, arr_len - 1 as usize);
+
+    let rc = Rc::new(arr);
+    par_merge_sort(rc, 0 as usize, arr_len - 1 as usize, 4);
 }
 
 fn simple_merge_sort(arr: &mut Vec<i64>, lo: usize, hi: usize) {
@@ -50,30 +56,31 @@ fn simple_merge_sort(arr: &mut Vec<i64>, lo: usize, hi: usize) {
     merge(arr, lo, mi, hi);
 }
 
-fn par_merge_sort(arr: &'static mut Vec<i64>, lo: usize, hi: usize, threads: i32){
+fn par_merge_sort(rc: &mut Rc<&mut Vec<i64>>, lo: usize, hi: usize, threads: i32) {
     if lo == hi {
         return;
     }
 
-    let mi = (hi + lo) / 2;
-    if threads == 1{
-        simple_merge_sort(arr, lo, hi);
-    } else if threads == 2 {
-        let safe_arr = Arc::new(Mutex::new(arr));
-        let safe_arr1 = Arc::clone(&safe_arr);
-        let thread1 = std::thread::spawn(move || {
-            let mut mutex_guard_arr = safe_arr1.lock().unwrap();
-            let mut par_arr = mutex_guard_arr.unwrap();
-            simple_merge_sort(&mut arr[lo..mi], lo, mi);
+    let mi = (hi + lo) / 2_usize;
+    if threads == 1 {
+        simple_merge_sort(&mut rc, lo, hi);
+    } else { //if threads == 2 {
+        let thread1_rc = *Rc::from(rc);
+        let thread2_rc = *Rc::from(rc);
+        let thread_rest = threads / 2;
+        let thread_rest_2 = threads - thread_rest;
+        let thread1 = thread::spawn( move || {
+            par_merge_sort(thread1_rc, lo, mi, thread_rest);
         });
-        let thread2 = std::thread::spawn(move || {
-            let mut mutex_guard_arr = safe_arr.lock().unwrap();
-            let mut par_arr = &*mutex_guard_arr;
-            simple_merge_sort(arr, mi + 1, hi)
+        let thread2 = thread::spawn( move || {
+            par_merge_sort(thread2_rc, mi + 1, hi, thread_rest_2);
         });
+
+        thread1.join().unwrap();
+        thread2.join().unwrap();
     }
 
-    merge(arr, lo, mi, hi);
+    merge(&mut rc, lo, mi, hi);
 }
 
 fn merge(arr: &mut Vec<i64>, lo: usize, mi: usize, hi: usize) {
@@ -100,8 +107,7 @@ fn merge(arr: &mut Vec<i64>, lo: usize, mi: usize, hi: usize) {
         if elem_i <= elem_j {
             arr[counter] = elem_i;
             i += 1;
-        } else {
-            // elem_j <= elem_i
+        } else { // elem_j <= elem_i
             arr[counter] = elem_j;
             j += 1;
         }
