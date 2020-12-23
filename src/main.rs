@@ -1,10 +1,11 @@
 use rand;
 
-use std::thread;
-use std::sync::{Arc, Mutex};
-use std::rc::Rc;
+// use std::rc::Rc;
+// use std::sync::{Arc, Mutex};
+// use std::thread;
+// use crossbeam::thread::Scope;
 
-use std::marker::PhantomData;
+extern crate crossbeam;
 
 fn main() {
     //let mut input_line = String::new();
@@ -13,118 +14,141 @@ fn main() {
     //     Ok(_) => i64::from_str_radix(&input_line.trim(), 10).unwrap(),
     //     Err(_) => panic!("Error while reading amount of values")
     // };
-    let amount = 1_000_000;
+    let amount = 100;
+    let verbose = true;
+    let threads_amount = 0_usize;
 
     // let mut rnd = rand::thread_rng();
     let mut arr: Vec<i64> = Vec::new();
     for _ in 0..amount {
-        arr.push( rand::random::<i64>() )
+        arr.push(rand::random::<i64>())
     }
 
-    // println!("Vector before sort:");
-    // for elem in &arr {
-    //     println!("{}", elem);
-    // }
+    if verbose {
+        println!("Vector before sort:");
+        for elem in &arr {
+            println!("{}", elem);
+        }
+    }
 
-    merge_sort(&mut arr);
+    par_merge_sort(&mut arr, threads_amount);
 
-    // println!("Vector after sort:");
-    // for elem in &arr {
-    //     println!("{}", elem);
-    // }
+    if verbose {
+        println!("Vector after sort:");
+        for elem in &arr {
+            println!("{}", elem);
+        }
+    }
 }
 
-fn merge_sort(arr: &mut Vec<i64>) {
-    let arr_len = arr.len();
-    let arr_slice = arr.as_mut_slice();
 
-    // simple_merge_sort(arr, 0 as usize, arr_len - 1 as usize);
-
-    let rc = Rc::new(arr);
-    par_merge_sort(rc, 0 as usize, arr_len - 1 as usize, 4);
+fn par_merge_sort(arr: &mut [i64], thread_count: usize) {
+    if thread_count > 0 {
+        parallel_merge_sort(arr, 4);
+    }
+    else{
+        simple_merge_sort(arr);
+    }
 }
 
-fn simple_merge_sort(arr: &mut Vec<i64>, lo: usize, hi: usize) {
-    if lo == hi {
+/// Used for easier use of merge sort.
+/// Single-threaded recursive version.
+fn merge_sort(arr: &mut [i64]) {
+    par_merge_sort(arr, 0_usize);
+}
+
+fn simple_merge_sort(arr: &mut [i64]) {
+    if arr.len() == 1 {
         return;
     }
 
-    let mi = (hi + lo) / 2;
-    simple_merge_sort(arr, lo, mi);
-    simple_merge_sort(arr, mi + 1, hi);
+    let mi = arr.len() / 2;
+    let (left_arr, right_arr) = arr.split_at_mut(mi);
 
-    merge(arr, lo, mi, hi);
+    simple_merge_sort(left_arr);
+    simple_merge_sort(right_arr);
+
+    merge(arr);
 }
 
-fn par_merge_sort(rc: &mut Rc<&mut Vec<i64>>, lo: usize, hi: usize, threads: i32) {
-    if lo == hi {
+fn parallel_merge_sort(arr: &mut [i64], threads: i32) {
+    let arr_length = arr.len();
+
+    if arr_length == 1 {
         return;
     }
 
-    let mi = (hi + lo) / 2_usize;
+    let mi = arr_length / 2_usize;
     if threads == 1 {
-        simple_merge_sort(&mut rc, lo, hi);
-    } else { //if threads == 2 {
-        let thread1_rc = *Rc::from(rc);
-        let thread2_rc = *Rc::from(rc);
+        simple_merge_sort(arr);
+    } else {
+        //if threads == 2 {
+        let (mut left_arr, mut right_arr) = arr.split_at_mut(mi);
+        // let mut left_arc = Arc::new(Mutex::new(left_arr));
+        // let mut right_arc = Arc::new(Mutex::new(right_arr));
         let thread_rest = threads / 2;
         let thread_rest_2 = threads - thread_rest;
-        let thread1 = thread::spawn( move || {
-            par_merge_sort(thread1_rc, lo, mi, thread_rest);
-        });
-        let thread2 = thread::spawn( move || {
-            par_merge_sort(thread2_rc, mi + 1, hi, thread_rest_2);
-        });
+        crossbeam::scope( move |s| {
+            s.spawn(move |_| {
+                parallel_merge_sort(&mut left_arr, thread_rest);
+            });
+            s.spawn(move |_| {
+                parallel_merge_sort(&mut right_arr, thread_rest_2);
+            });
+        }).unwrap();
 
-        thread1.join().unwrap();
-        thread2.join().unwrap();
+        // thread1.join().unwrap();
+        // thread2.join().unwrap();
     }
 
-    merge(&mut rc, lo, mi, hi);
+    merge(arr);
 }
 
-fn merge(arr: &mut Vec<i64>, lo: usize, mi: usize, hi: usize) {
-    let mut lo_arr: Vec<i64> = Vec::new();
-    for i in lo..(mi + 1) {
-        let elem = *arr.get(i).unwrap();
-        lo_arr.push(elem);
+fn merge(arr: &mut [i64]) {
+    let mi = arr.len() / 2;
+    let mut left_vec: Vec<i64> = Vec::new();
+    for i in 0..mi {
+        left_vec.push(arr[i].clone());
     }
 
-    let mut hi_arr: Vec<i64> = Vec::new();
-    for i in (mi + 1)..(hi + 1) {
-        let elem = *arr.get(i).unwrap();
-        hi_arr.push(elem);
+    let mut right_vec: Vec<i64> = Vec::new();
+    for i in mi..arr.len() {
+        right_vec.push(arr[i].clone());
     }
+
+    let left_arr_temp = left_vec.as_slice();
+    let right_arr_temp = right_vec.as_slice();
 
     let mut i = 0;
     let mut j = 0;
-    let mut counter = lo;
+    let mut counter = 0;
 
-    while i < lo_arr.len() && j < hi_arr.len() {
-        let elem_i = *lo_arr.get(i).unwrap();
-        let elem_j = *hi_arr.get(j).unwrap();
+    while i < left_arr_temp.len() && j < right_arr_temp.len() {
+        let elem_i = left_arr_temp[i];
+        let elem_j = right_arr_temp[j];
 
         if elem_i <= elem_j {
             arr[counter] = elem_i;
             i += 1;
-        } else { // elem_j <= elem_i
+        } else {
+            // elem_j <= elem_i
             arr[counter] = elem_j;
             j += 1;
         }
         counter += 1;
     }
 
-    if j == hi_arr.len() {
-        while i < lo_arr.len() {
-            let elem_i = *lo_arr.get(i).unwrap();
+    if j == right_arr_temp.len() {
+        while i < left_arr_temp.len() {
+            let elem_i = left_arr_temp[i];
             arr[counter] = elem_i;
             i += 1;
             counter += 1;
         }
-    }
-    else { // i == lo_arr.len()
-        while j < hi_arr.len() {
-            let elem_j = *hi_arr.get(j).unwrap();
+    } else {
+        // i == lo_arr.len()
+        while j < right_arr_temp.len() {
+            let elem_j = right_arr_temp[j];
             arr[counter] = elem_j;
             j += 1;
             counter += 1;
